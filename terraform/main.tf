@@ -271,7 +271,7 @@ data "aws_ami" "rhel9" {
 # ========================================
 resource "aws_instance" "ssm_test" {
   ami                         = data.aws_ami.rhel9.id
-  instance_type               = "t3.micro"
+  instance_type               = "t3.small"
   subnet_id                   = aws_subnet.private_1.id
   associate_public_ip_address = false
   vpc_security_group_ids = [
@@ -290,6 +290,9 @@ resource "aws_instance" "ssm_test" {
   systemctl enable amazon-ssm-agent
   systemctl start amazon-ssm-agent
 EOF
+  depends_on = [
+    aws_route.private_1_internet_access
+  ]
 
   tags = {
     Name = "petclinic-ssm-test"
