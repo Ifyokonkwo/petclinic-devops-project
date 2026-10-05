@@ -219,6 +219,30 @@ resource "aws_iam_role_policy_attachment" "ec2_ssm_policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+# ----------------------------------------
+# RDS Secret Access
+# ----------------------------------------
+resource "aws_iam_role_policy" "rds_secret_access" {
+  name = "petclinic-rds-secret-access"
+  role = aws_iam_role.ec2_ssm_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+
+        Resource = aws_db_instance.petclinic.master_user_secret[0].secret_arn
+      }
+    ]
+  })
+}
+
 # ========================================
 # EC2 Instance Profile
 # ========================================
@@ -275,7 +299,8 @@ resource "aws_instance" "ssm_test" {
   subnet_id                   = aws_subnet.private_1.id
   associate_public_ip_address = false
   vpc_security_group_ids = [
-    aws_security_group.ec2_ssm_sg.id
+    aws_security_group.ec2_ssm_sg.id,
+    aws_security_group.db_client_sg.id
   ]
   iam_instance_profile = aws_iam_instance_profile.ec2_ssm_profile.name
   metadata_options {
@@ -296,5 +321,111 @@ EOF
 
   tags = {
     Name = "petclinic-ssm-test"
+  }
+}
+
+# ========================================
+# RDS DATABASE
+# ========================================
+
+# ----------------------------------------
+# DB Subnet Group
+# ----------------------------------------
+resource "aws_db_subnet_group" "main" {
+  name = "petclinic-db-subnet-group"
+
+  subnet_ids = [
+    aws_subnet.private_1.id,
+    aws_subnet.private_2.id
+  ]
+
+  tags = {
+    Name = "petclinic-db-subnet-group"
+  }
+}
+
+# ----------------------------------------
+# Database Client Security Group
+# ----------------------------------------
+resource "aws_security_group" "db_client_sg" {
+  name        = "petclinic-db-client-sg"
+  description = "Security group for resources allowed to connect to RDS"
+  vpc_id      = aws_vpc.main.id
+
+  tags = {
+    Name = "petclinic-db-client-sg"
+  }
+}
+
+resource "aws_vpc_security_group_egress_rule" "db_client_mysql" {
+  security_group_id = aws_security_group.db_client_sg.id
+
+  referenced_security_group_id = aws_security_group.rds_sg.id
+
+  from_port   = 3306
+  to_port     = 3306
+  ip_protocol = "tcp"
+
+  description = "Allow approved database clients to connect to RDS MySQL"
+}
+
+# ----------------------------------------
+# RDS Security Group
+# ----------------------------------------
+resource "aws_security_group" "rds_sg" {
+  name        = "petclinic-rds-sg"
+  description = "Allow MySQL access from approved application resources"
+  vpc_id      = aws_vpc.main.id
+
+  tags = {
+    Name = "petclinic-rds-sg"
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "rds_mysql" {
+  security_group_id            = aws_security_group.rds_sg.id
+  referenced_security_group_id = aws_security_group.db_client_sg.id
+
+  from_port   = 3306
+  to_port     = 3306
+  ip_protocol = "tcp"
+
+  description = "Allow MySQL from approved database clients"
+}
+
+
+# ----------------------------------------
+# RDS MySQL Instance
+# ----------------------------------------
+resource "aws_db_instance" "petclinic" {
+  identifier = "petclinic-db"
+
+  engine         = "mysql"
+  instance_class = "db.t3.micro"
+
+  allocated_storage = 20
+  storage_type      = "gp3"
+  storage_encrypted = true
+
+  db_subnet_group_name = aws_db_subnet_group.main.name
+
+  vpc_security_group_ids = [
+    aws_security_group.rds_sg.id
+  ]
+
+  publicly_accessible = false
+
+  db_name  = "petclinic"
+  username = "petclinicadmin"
+
+  manage_master_user_password = true
+
+  multi_az = false
+
+  deletion_protection = false
+  skip_final_snapshot = true
+
+  tags = {
+    Name = "petclinic-db"
   }
 }
